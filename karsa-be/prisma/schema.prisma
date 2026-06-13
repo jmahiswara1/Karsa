@@ -1,0 +1,285 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum EnergyLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum Mood {
+  CALM
+  NEUTRAL
+  TIRED
+  STRESSED
+  FOCUSED
+}
+
+model User {
+  id                 String   @id @default(uuid())
+  email              String   @unique
+  name               String
+  password           String?
+  googleId           String?  @unique
+  avatarUrl          String?
+  hashedRefreshToken String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  projects      Project[]
+  tasks         Task[]
+  notes         Note[]
+  quickCaptures QuickCapture[]
+  dailyPlans    DailyPlan[]
+  moodLogs      MoodLog[]
+  aiSuggestions AISuggestion[]
+  preferences   UserPreference?
+  activityLogs  ActivityLog[]
+  notifications Notification[]
+  taskColumns   TaskColumn[]
+  noteFolders   NoteFolder[]
+  plannerEntries PlannerEntry[]
+}
+
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String?
+  createdAt DateTime @default(now())
+
+  projects Project[]
+  tasks    Task[]
+  notes    Note[]
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  status      ProjectStatus @default(PLANNING)
+  priority    Priority      @default(MEDIUM)
+  deadline    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  userId      String
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks         Task[]
+  notes         Note[]
+  tags          Tag[]
+  aiSuggestions AISuggestion[]
+}
+
+model TaskColumn {
+  id        String   @id @default(uuid())
+  name      String
+  order     Int      @default(0)
+  userId    String
+  createdAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks Task[]
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  title       String
+  description String?
+  status      TaskStatus @default(TODO)
+  order       Int        @default(0)
+  priority    Priority   @default(MEDIUM)
+  deadline    DateTime?
+  estimate    Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  userId      String
+  projectId   String?
+  columnId    String?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project       Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  column        TaskColumn?    @relation(fields: [columnId], references: [id], onDelete: SetNull)
+  reminder      Reminder?
+  tags          Tag[]
+  aiSuggestions AISuggestion[]
+  plannerEntries PlannerEntry[]
+}
+
+model NoteFolder {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+  parentId  String?
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   NoteFolder?  @relation("FolderToFolder", fields: [parentId], references: [id], onDelete: Cascade)
+  children NoteFolder[] @relation("FolderToFolder")
+  notes    Note[]
+
+  @@unique([userId, name, parentId]) // Ensure unique folder names within the same parent
+}
+
+model Note {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  source    String   @default("MANUAL")
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+  projectId String?
+  folderId  String?
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  folder  NoteFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  tags    Tag[]
+}
+
+model QuickCapture {
+  id          String   @id @default(uuid())
+  rawInput    String
+  isProcessed Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  userId      String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model DailyPlan {
+  id            String   @id @default(uuid())
+  date          DateTime @default(now()) @db.Date
+  focusTasks    Json
+  lightTasks    Json
+  tasksToDefer  Json
+  workloadLevel String
+  aiNote        String?
+  createdAt     DateTime @default(now())
+  userId        String
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aiSuggestions AISuggestion[]
+}
+
+model PlannerEntry {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  date          DateTime @db.Date
+  startTime     String
+  endTime       String
+  taskId        String?
+  isAiGenerated Boolean  @default(false)
+  aiReason      String?
+  color         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  userId        String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+}
+
+model MoodLog {
+  id        String      @id @default(uuid())
+  energy    EnergyLevel
+  mood      Mood
+  note      String?
+  createdAt DateTime    @default(now())
+  userId    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Reminder {
+  id           String   @id @default(uuid())
+  reminderTime DateTime
+  isSent       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  taskId       String   @unique
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model AISuggestion {
+  id             String   @id @default(uuid())
+  suggestionType String
+  content        Json
+  isAccepted     Boolean?
+  createdAt      DateTime @default(now())
+  userId         String
+  taskId         String?
+  projectId      String?
+  dailyPlanId    String?
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task      Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dailyPlan DailyPlan? @relation(fields: [dailyPlanId], references: [id], onDelete: Cascade)
+}
+
+model UserPreference {
+  id                 String  @id @default(uuid())
+  language           String  @default("id")
+  theme              String  @default("system")
+  emailNotifications Boolean @default(true)
+  pushNotifications  Boolean @default(false)
+  userId             String  @unique
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  action     String
+  entityType String
+  entityId   String
+  details    Json?
+  createdAt  DateTime @default(now())
+  userId     String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  type      String
+  createdAt DateTime @default(now())
+  userId    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
