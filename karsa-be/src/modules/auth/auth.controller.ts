@@ -14,7 +14,9 @@ export class AuthController {
   @Get('google')
   @UseGuards(GoogleAuthGuard)
   googleAuth() {
-    // Initiates the Google OAuth flow
+    // Invite code is passed via query param ?invite=xxx
+    // GoogleStrategy reads it from req.query.invite
+    // Passport handles the redirect to Google OAuth
   }
 
   @Get('google/callback')
@@ -23,16 +25,42 @@ export class AuthController {
     @Req() req: Request & { user?: unknown },
     @Res() res: Response,
   ) {
+    const frontendUrl = process.env.CORS_ORIGIN || 'http://localhost:3000';
+
     const user = req.user as User;
+    if (!user) {
+      return res.redirect(
+        `${frontendUrl}/callback?error=authentication_failed`,
+      );
+    }
+
+    if (user.status === 'PENDING') {
+      const pendingUser = JSON.stringify({
+        name: user.name || '',
+        email: user.email,
+        avatarUrl: user.avatarUrl || '',
+      });
+      res.cookie('pending_user', pendingUser, {
+        maxAge: 10 * 60 * 1000, // 10 minutes
+        httpOnly: false,
+        sameSite: 'lax',
+        path: '/',
+      });
+      return res.redirect(`${frontendUrl}/callback?pending=true`);
+    }
+
+    if (user.status === 'REJECTED') {
+      return res.redirect(`${frontendUrl}/callback?rejected=true`);
+    }
+
     const tokens = await this.authService.generateTokens(
       user.id,
       user.email,
       user.role,
     );
 
-    // Redirect to frontend with tokens (in production, use secure HttpOnly cookies)
-    const frontendUrl = process.env.CORS_ORIGIN || 'http://localhost:3000';
-    res.redirect(
+    // Redirect to frontend with tokens
+    return res.redirect(
       `${frontendUrl}/callback?access_token=${tokens.accessToken}&refresh_token=${tokens.refreshToken}`,
     );
   }

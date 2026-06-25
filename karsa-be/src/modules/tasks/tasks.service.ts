@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
@@ -7,15 +8,24 @@ import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class TasksService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private activityLog: ActivityLogService,
+  ) {}
 
   async create(userId: string, createTaskDto: CreateTaskDto) {
-    return this.prisma.task.create({
+    const task = await this.prisma.task.create({
       data: {
         ...createTaskDto,
         userId,
       },
     });
+
+    await this.activityLog.log(userId, 'CREATE', 'Task', task.id, {
+      title: task.title,
+    });
+
+    return task;
   }
 
   async findAll(userId: string, query: TaskQueryDto) {
@@ -30,11 +40,7 @@ export class TasksService {
       ...(priority && { priority }),
       ...(projectId && { projectId }),
       ...(columnId && { columnId }),
-      ...(deadline && {
-        deadline: {
-          lte: new Date(deadline), // example for 'before this deadline'
-        },
-      }),
+      ...(deadline && this.buildDeadlineFilter(deadline)),
       ...(search && {
         OR: [
           { title: { contains: search, mode: 'insensitive' } },
@@ -54,6 +60,9 @@ export class TasksService {
           project: {
             select: { id: true, title: true },
           },
+          column: {
+            select: { id: true, name: true, isSystem: true },
+          },
         },
       }),
       this.prisma.task.count({ where }),
@@ -66,6 +75,62 @@ export class TasksService {
         limit,
         total,
         totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  private buildDeadlineFilter(deadline: string): Prisma.TaskWhereInput {
+    if (deadline === 'today') {
+      return {
+        status: { notIn: ['DONE', 'CANCELLED'] },
+        column: { isSystem: true },
+        OR: [{ deadline: { lte: new Date() } }, { deadline: null }],
+      };
+    }
+
+    if (deadline === 'tomorrow') {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const startOfDay = new Date(
+        tomorrow.getFullYear(),
+        tomorrow.getMonth(),
+        tomorrow.getDate(),
+      );
+      const endOfDay = new Date(
+        tomorrow.getFullYear(),
+        tomorrow.getMonth(),
+        tomorrow.getDate(),
+        23,
+        59,
+        59,
+        999,
+      );
+      return {
+        deadline: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      };
+    }
+
+    if (deadline === 'overdue') {
+      const now = new Date();
+      const startOfDay = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      );
+      return {
+        deadline: {
+          lt: startOfDay,
+        },
+      };
+    }
+
+    // Default: treat as a specific date (before this date)
+    return {
+      deadline: {
+        lte: new Date(deadline),
       },
     };
   }
@@ -89,17 +154,30 @@ export class TasksService {
 
   async update(userId: string, id: string, updateTaskDto: UpdateTaskDto) {
     await this.findOne(userId, id); // Ensure it exists and belongs to user
-    return this.prisma.task.update({
+    const task = await this.prisma.task.update({
       where: { id },
       data: updateTaskDto,
     });
+
+    await this.activityLog.log(userId, 'UPDATE', 'Task', id, {
+      title: task.title,
+      changes: Object.keys(updateTaskDto),
+    });
+
+    return task;
   }
 
   async remove(userId: string, id: string) {
-    await this.findOne(userId, id); // Ensure it exists and belongs to user
-    return this.prisma.task.delete({
+    const task = await this.findOne(userId, id); // Ensure it exists and belongs to user
+    await this.prisma.task.delete({
       where: { id },
     });
+
+    await this.activityLog.log(userId, 'DELETE', 'Task', id, {
+      title: task.title,
+    });
+
+    return task;
   }
 
   async reorder(
@@ -107,16 +185,15 @@ export class TasksService {
     tasks: { id: string; order: number; columnId?: string; status?: string }[],
   ) {
     // Reorder bulk update
-    const updates = tasks.map((task) =>
-      this.prisma.task.update({
+    const updates = tasks.map((task) => {
+      const data: Record<string, unknown> = { order: task.order };
+      if (task.columnId !== undefined) data.columnId = task.columnId;
+      if (task.status !== undefined) data.status = task.status;
+      return this.prisma.task.update({
         where: { id: task.id, userId },
-        data: {
-          order: task.order,
-          ...(task.columnId !== undefined && { columnId: task.columnId }),
-          ...(task.status !== undefined && { status: task.status }),
-        },
-      }),
-    );
+        data,
+      });
+    });
     await this.prisma.$transaction(updates);
   }
 

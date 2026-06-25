@@ -54,6 +54,22 @@ enum UserRole {
   ADMIN
 }
 
+enum UserStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+}
+
+enum AuditAction {
+  APPROVE
+  REJECT
+  DELETE
+  UPDATE_ROLE
+  UPDATE_STATUS
+  GENERATE_INVITE
+  REVOKE_INVITE
+}
+
 model User {
   id                 String   @id @default(uuid())
   email              String   @unique
@@ -64,6 +80,7 @@ model User {
   hashedRefreshToken String?
   createdAt          DateTime @default(now())
   role                UserRole   @default(FREE)
+  status              UserStatus @default(PENDING)
   subscriptionExpiresAt DateTime?
   googleCalendarToken    String?
   googleCalendarRefreshToken String?
@@ -84,8 +101,13 @@ model User {
   plannerEntries PlannerEntry[]
   conversations Conversation[]
   syncLogs      SyncLog[]
+  auditLogsAsAdmin  AdminAuditLog[] @relation("AuditAdmin")
+  auditLogsAsTarget AdminAuditLog[] @relation("AuditTarget")
+  invitesCreated    InviteCode[]    @relation("InviteCreator")
+  invitesUsed       InviteCode[]    @relation("InviteUsedBy")
 
   @@index([role])
+  @@index([status])
 }
 
 model Tag {
@@ -295,6 +317,42 @@ model ActivityLog {
   userId     String
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model AdminAuditLog {
+  id            String      @id @default(uuid())
+  action        AuditAction
+  targetUserId  String?
+  details       Json?
+  createdAt     DateTime    @default(now())
+  adminUserId   String
+
+  adminUser  User  @relation("AuditAdmin", fields: [adminUserId], references: [id], onDelete: Cascade)
+  targetUser User? @relation("AuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([adminUserId])
+  @@index([targetUserId])
+  @@index([createdAt])
+}
+
+model InviteCode {
+  id          String    @id @default(uuid())
+  code        String    @unique
+  email       String?
+  expiresAt   DateTime
+  isUsed      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  createdBy   String
+  usedBy      String?
+
+  creator User  @relation("InviteCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  user    User? @relation("InviteUsedBy", fields: [usedBy], references: [id], onDelete: SetNull)
+
+  @@index([code])
+  @@index([createdBy])
 }
 
 model Notification {
